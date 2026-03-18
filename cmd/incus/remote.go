@@ -43,6 +43,49 @@ type remoteColumn struct {
 	Data func(string, config.Remote) string
 }
 
+func isSSHRemoteAddr(addr string) bool {
+	return strings.HasPrefix(addr, "ssh:")
+}
+
+func isSocketRemoteAddr(addr string) bool {
+	return strings.HasPrefix(addr, "unix:") || isSSHRemoteAddr(addr)
+}
+
+func normalizeSSHRemoteURL(remoteURL *url.URL) (string, error) {
+	if remoteURL.Hostname() == "" {
+		return "", errors.New(i18n.G("SSH remotes must include a host"))
+	}
+
+	if remoteURL.User != nil {
+		if _, ok := remoteURL.User.Password(); ok {
+			return "", errors.New(i18n.G("SSH remotes do not support passwords in the URL"))
+		}
+	}
+
+	host := remoteURL.Hostname()
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		host = fmt.Sprintf("[%s]", host)
+	}
+
+	if remoteURL.Port() != "" {
+		host = fmt.Sprintf("%s:%s", host, remoteURL.Port())
+	} else {
+		host = fmt.Sprintf("%s:%d", host, 22)
+	}
+
+	normalizedURL := &url.URL{
+		Scheme: "ssh",
+		User:   remoteURL.User,
+		Host:   host,
+	}
+
+	if remoteURL.Path != "" && remoteURL.Path != "/" {
+		normalizedURL.Path = remoteURL.Path
+	}
+
+	return normalizedURL.String(), nil
+}
+
 // Command returns a cobra.Command for use with (*cobra.Command).AddCommand.
 func (c *cmdRemote) Command() *cobra.Command {
 	cmd := &cobra.Command{}
@@ -128,7 +171,7 @@ func (c *cmdRemoteAdd) Command() *cobra.Command {
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Add new remote servers
 
-URL for remote resources must be HTTPS (https://).
+URL for remote resources must be HTTPS (https://) or SSH (ssh://).
 
 Basic authentication can be used when combined with the "simplestreams" protocol:
   incus remote add some-name https://LOGIN:PASSWORD@example.com/some/path --protocol=simplestreams
@@ -390,7 +433,7 @@ func (c *cmdRemoteAdd) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	if remoteURL.Scheme != "" {
-		if remoteURL.Scheme != "unix" && remoteURL.Scheme != "https" {
+		if remoteURL.Scheme != "unix" && remoteURL.Scheme != "https" && remoteURL.Scheme != "ssh" {
 			return fmt.Errorf(i18n.G("Invalid URL scheme \"%s\" in \"%s\""), remoteURL.Scheme, addr)
 		}
 
@@ -405,39 +448,54 @@ func (c *cmdRemoteAdd) Run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if remoteURL.Host != "" {
-		rHost = remoteURL.Host
+	if rScheme == "ssh" {
+		if c.flagPublic {
+			return errors.New(i18n.G("SSH remotes cannot be public image servers"))
+		}
+
+		if c.flagAuthType != "" {
+			return errors.New(i18n.G("Authentication type cannot be specified for SSH remotes"))
+		}
+
+		addr, err = normalizeSSHRemoteURL(remoteURL)
+		if err != nil {
+			return err
+		}
 	} else {
-		rHost = addr
-	}
+		if remoteURL.Host != "" {
+			rHost = remoteURL.Host
+		} else {
+			rHost = addr
+		}
 
-	host, port, err := net.SplitHostPort(rHost)
-	if err == nil {
-		rHost = host
-		rPort = port
-	} else {
-		rPort = fmt.Sprintf("%d", ports.HTTPSDefaultPort)
-	}
+		host, port, err := net.SplitHostPort(rHost)
+		if err == nil {
+			rHost = host
+			rPort = port
+		} else {
+			rPort = fmt.Sprintf("%d", ports.HTTPSDefaultPort)
+		}
 
-	if rScheme == "unix" {
-		rHost = strings.TrimPrefix(strings.TrimPrefix(addr, "unix:"), "//")
-		rPort = ""
-	}
+		if rScheme == "unix" {
+			rHost = strings.TrimPrefix(strings.TrimPrefix(addr, "unix:"), "//")
+			rPort = ""
+		}
 
-	if strings.Contains(rHost, ":") && !strings.HasPrefix(rHost, "[") {
-		rHost = fmt.Sprintf("[%s]", rHost)
-	}
+		if strings.Contains(rHost, ":") && !strings.HasPrefix(rHost, "[") {
+			rHost = fmt.Sprintf("[%s]", rHost)
+		}
 
-	if rPort != "" {
-		addr = rScheme + "://" + rHost + ":" + rPort
-	} else {
-		addr = rScheme + "://" + rHost
+		if rPort != "" {
+			addr = rScheme + "://" + rHost + ":" + rPort
+		} else {
+			addr = rScheme + "://" + rHost
+		}
 	}
 
 	// Finally, actually add the remote, almost...  If the remote is a private
 	// HTTPS server then we need to ensure we have a client certificate before
 	// adding the remote server.
-	if rScheme != "unix" && !c.flagPublic && (c.flagAuthType == api.AuthenticationMethodTLS || c.flagAuthType == "") {
+	if rScheme != "unix" && rScheme != "ssh" && !c.flagPublic && (c.flagAuthType == api.AuthenticationMethodTLS || c.flagAuthType == "") {
 		if !conf.HasClientCertificate() {
 			fmt.Fprint(os.Stderr, i18n.G("Generating a client certificate. This may take a minute...")+"\n")
 			err = conf.GenerateClientCertificate()
@@ -462,14 +520,18 @@ func (c *cmdRemoteAdd) Run(cmd *cobra.Command, args []string) error {
 		d, err = conf.GetInstanceServer(server)
 	}
 
-	// Handle Unix socket connections
-	if strings.HasPrefix(addr, "unix:") {
+	// Handle Unix socket and SSH connections.
+	if isSocketRemoteAddr(addr) {
 		if err != nil {
 			return err
 		}
 
 		remote := conf.Remotes[server]
-		remote.AuthType = api.AuthenticationMethodTLS
+		if isSSHRemoteAddr(addr) {
+			remote.AuthType = "ssh"
+		} else {
+			remote.AuthType = api.AuthenticationMethodTLS
+		}
 
 		// Handle project.
 		project, err := c.findProject(d.(incus.InstanceServer), c.flagProject)
@@ -1049,7 +1111,9 @@ func (c *cmdRemoteList) protocolColumnData(_ string, rc config.Remote) string {
 
 func (c *cmdRemoteList) authTypeColumnData(_ string, rc config.Remote) string {
 	if rc.AuthType == "" {
-		if strings.HasPrefix(rc.Addr, "unix:") {
+		if isSSHRemoteAddr(rc.Addr) {
+			rc.AuthType = "ssh"
+		} else if strings.HasPrefix(rc.Addr, "unix:") {
 			rc.AuthType = "file access"
 		} else if rc.Protocol != "incus" {
 			rc.AuthType = "none"
@@ -1383,6 +1447,26 @@ func (c *cmdRemoteSetURL) Run(cmd *cobra.Command, args []string) error {
 
 		remote.Global = false
 		conf.Remotes[remoteName] = remote
+	}
+
+	if isSSHRemoteAddr(remoteURL) {
+		parsedURL, err := url.Parse(remoteURL)
+		if err != nil {
+			return err
+		}
+
+		remoteURL, err = normalizeSSHRemoteURL(parsedURL)
+		if err != nil {
+			return err
+		}
+
+		remote.AuthType = "ssh"
+	} else if remote.AuthType == "ssh" {
+		if remote.Protocol == "incus" && !remote.Public {
+			remote.AuthType = api.AuthenticationMethodTLS
+		} else {
+			remote.AuthType = ""
+		}
 	}
 
 	remote.Addr = remoteURL

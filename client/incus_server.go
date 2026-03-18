@@ -106,6 +106,7 @@ func (r *ProtocolIncus) UseProject(name string) InstanceServer {
 		ctx:                  r.ctx,
 		ctxConnected:         r.ctxConnected,
 		ctxConnectedCancel:   r.ctxConnectedCancel,
+		disconnectHook:       r.disconnectHook,
 		server:               r.server,
 		http:                 r.http,
 		httpCertificate:      r.httpCertificate,
@@ -120,6 +121,7 @@ func (r *ProtocolIncus) UseProject(name string) InstanceServer {
 		eventListeners:       make(map[string][]*EventListener), // New project specific listeners.
 		skipEvents:           r.skipEvents,
 		oidcClient:           r.oidcClient,
+		tempPath:             r.tempPath,
 	}
 }
 
@@ -131,6 +133,7 @@ func (r *ProtocolIncus) UseTarget(name string) InstanceServer {
 		ctx:                  r.ctx,
 		ctxConnected:         r.ctxConnected,
 		ctxConnectedCancel:   r.ctxConnectedCancel,
+		disconnectHook:       r.disconnectHook,
 		server:               r.server,
 		http:                 r.http,
 		httpCertificate:      r.httpCertificate,
@@ -145,6 +148,7 @@ func (r *ProtocolIncus) UseTarget(name string) InstanceServer {
 		skipEvents:           r.skipEvents,
 		oidcClient:           r.oidcClient,
 		clusterTarget:        name,
+		tempPath:             r.tempPath,
 	}
 }
 

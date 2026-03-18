@@ -113,6 +113,34 @@ func (c *Config) GetInstanceServer(name string) (incus.InstanceServer, error) {
 		return d, nil
 	}
 
+	if isSSHRemoteAddr(remote.Addr) {
+		var d incus.InstanceServer
+		if remote.KeepAlive > 0 {
+			d, err = c.handleKeepAlive(remote, name, args)
+			if err != nil {
+				d, err = incus.ConnectIncusSSH(remote.Addr, args)
+				if err != nil {
+					return nil, err
+				}
+			}
+		} else {
+			d, err = incus.ConnectIncusSSH(remote.Addr, args)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		if remote.Project != "" && remote.Project != "default" {
+			d = d.UseProject(remote.Project)
+		}
+
+		if c.ProjectOverride != "" {
+			d = d.UseProject(c.ProjectOverride)
+		}
+
+		return d, nil
+	}
+
 	// HTTPs
 	if !slices.Contains([]string{api.AuthenticationMethodOIDC}, remote.AuthType) && (args.TLSClientCert == "" || args.TLSClientKey == "") {
 		return nil, errors.New("Missing TLS client certificate and key")
@@ -175,6 +203,23 @@ func (c *Config) GetImageServer(name string) (incus.ImageServer, error) {
 	remoteAddr, hasUnixPrefix := strings.CutPrefix(remote.Addr, "unix:")
 	if hasUnixPrefix {
 		d, err := incus.ConnectIncusUnix(strings.TrimPrefix(remoteAddr, "//"), args)
+		if err != nil {
+			return nil, err
+		}
+
+		if remote.Project != "" && remote.Project != "default" {
+			d = d.UseProject(remote.Project)
+		}
+
+		if c.ProjectOverride != "" {
+			d = d.UseProject(c.ProjectOverride)
+		}
+
+		return d, nil
+	}
+
+	if isSSHRemoteAddr(remote.Addr) {
+		d, err := incus.ConnectIncusSSH(remote.Addr, args)
 		if err != nil {
 			return nil, err
 		}
@@ -277,8 +322,9 @@ func (c *Config) GetImageServer(name string) (incus.ImageServer, error) {
 func (c *Config) getConnectionArgs(name string) (*incus.ConnectionArgs, error) {
 	remote := c.Remotes[name]
 	args := incus.ConnectionArgs{
-		UserAgent: c.UserAgent,
-		AuthType:  remote.AuthType,
+		UserAgent:      c.UserAgent,
+		AuthType:       remote.AuthType,
+		PromptPassword: c.PromptPassword,
 	}
 
 	if args.AuthType == api.AuthenticationMethodOIDC {
@@ -316,7 +362,7 @@ func (c *Config) getConnectionArgs(name string) (*incus.ConnectionArgs, error) {
 	}
 
 	// Stop here if no TLS involved
-	if strings.HasPrefix(remote.Addr, "unix:") {
+	if isSocketRemoteAddr(remote.Addr) {
 		return &args, nil
 	}
 

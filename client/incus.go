@@ -27,6 +27,7 @@ type ProtocolIncus struct {
 	server             *api.Server
 	ctxConnected       context.Context
 	ctxConnectedCancel context.CancelFunc
+	disconnectHook     func()
 
 	// eventConns contains event listener connections associated to a project name (or empty for all projects).
 	eventConns map[string]*websocket.Conn
@@ -60,7 +61,11 @@ type ProtocolIncus struct {
 
 // Disconnect gets rid of any background goroutines.
 func (r *ProtocolIncus) Disconnect() {
-	if r.ctxConnected.Err() != nil {
+	if r.disconnectHook != nil {
+		r.disconnectHook()
+	}
+
+	if r.ctxConnected.Err() == nil {
 		r.ctxConnectedCancel()
 	}
 }

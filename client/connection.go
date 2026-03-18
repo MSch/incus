@@ -74,6 +74,9 @@ type ConnectionArgs struct {
 
 	// Temp storage.
 	TempPath string
+
+	// PromptPassword is a helper function used when encountering an encrypted SSH key.
+	PromptPassword func(filename string) (string, error)
 }
 
 // ConnectIncus lets you connect to a remote Incus daemon over HTTPs.

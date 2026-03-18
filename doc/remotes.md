@@ -12,11 +12,15 @@ For example, you can manage instances or update the server configuration on the 
 
 ## Authentication
 
-To be able to add an Incus server as a remote server, the server's API must be exposed, which means that its {config:option}`server-core:core.https_address` server configuration option must be set.
+To be able to add an Incus server as a remote server over HTTPS, the server's API must be exposed, which means that its {config:option}`server-core:core.https_address` server configuration option must be set.
 
 When adding the server, you must then authenticate with it using the chosen method for {ref}`authentication`.
 
 See {ref}`server-expose` for more information.
+
+As an alternative, you can add an SSH-backed remote with a URL such as `ssh://user@example.net/run/incus/unix.socket`.
+In that mode, the client connects over SSH and talks to the remote Unix socket directly, similar to the built-in `local` remote.
+If you omit the socket path, the client tries the standard Incus socket locations automatically.
 
 ## List configured remotes
 

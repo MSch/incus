@@ -70,7 +70,7 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	for k, r := range c.Remotes {
-		if !r.Public && r.AuthType == "" {
+		if !r.Public && r.AuthType == "" && !isSSHRemoteAddr(r.Addr) {
 			r.AuthType = api.AuthenticationMethodTLS
 			c.Remotes[k] = r
 		}
