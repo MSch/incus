@@ -451,13 +451,14 @@ type InstanceServer interface {
 
 // The ConnectionInfo struct represents general information for a connection.
 type ConnectionInfo struct {
-	Addresses   []string
-	Certificate string
-	Protocol    string
-	URL         string
-	SocketPath  string
-	Project     string
-	Target      string
+	Addresses         []string
+	Certificate       string
+	Protocol          string
+	URL               string
+	ConnectionAddress string
+	SocketPath        string
+	Project           string
+	Target            string
 }
 
 // The BackupFileRequest struct is used for a backup download request.

@@ -325,6 +325,7 @@ func (c *Config) getConnectionArgs(name string) (*incus.ConnectionArgs, error) {
 		UserAgent:      c.UserAgent,
 		AuthType:       remote.AuthType,
 		PromptPassword: c.PromptPassword,
+		PromptHostKey:  c.PromptHostKey,
 	}
 
 	if args.AuthType == api.AuthenticationMethodOIDC {

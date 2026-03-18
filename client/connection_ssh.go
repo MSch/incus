@@ -201,7 +201,7 @@ func sshHTTPClient(args *ConnectionArgs, remoteURL *url.URL) (*http.Client, *ssh
 }
 
 func sshClientConfig(remoteURL *url.URL, args *ConnectionArgs) (*ssh.ClientConfig, net.Conn, error) {
-	hostKeyCallback, err := sshKnownHostsCallback()
+	hostKeyCallback, err := sshKnownHostsCallback(args)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -260,13 +260,85 @@ func sshUserName(remoteURL *url.URL) (string, error) {
 	return "", fmt.Errorf("Failed to determine the SSH user: %w", err)
 }
 
-func sshKnownHostsCallback() (ssh.HostKeyCallback, error) {
+func sshKnownHostsCallback(args *ConnectionArgs) (ssh.HostKeyCallback, error) {
+	knownHostsFiles, userKnownHostsPath, err := sshKnownHostsFiles()
+	if err != nil && len(knownHostsFiles) == 0 {
+		return nil, err
+	}
+
+	var hostKeyCallback ssh.HostKeyCallback
+	if len(knownHostsFiles) > 0 {
+		hostKeyCallback, err = knownhosts.New(knownHostsFiles...)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	acceptedKeys := map[string]string{}
+	mu := sync.Mutex{}
+
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		keyFingerprint := ssh.FingerprintSHA256(key)
+		host := knownhosts.Normalize(hostname)
+
+		mu.Lock()
+		acceptedFingerprint, ok := acceptedKeys[host]
+		if ok && acceptedFingerprint == keyFingerprint {
+			mu.Unlock()
+			return nil
+		}
+
+		mu.Unlock()
+
+		if ok {
+			return fmt.Errorf("SSH host key mismatch for %q", host)
+		}
+
+		if hostKeyCallback != nil {
+			err := hostKeyCallback(hostname, remote, key)
+			if err == nil {
+				return nil
+			}
+
+			var keyErr *knownhosts.KeyError
+			if !errors.As(err, &keyErr) || len(keyErr.Want) > 0 {
+				return err
+			}
+		}
+
+		if args == nil || args.PromptHostKey == nil {
+			return fmt.Errorf("Unknown SSH host key for %q", host)
+		}
+
+		err := args.PromptHostKey(host, key.Type(), keyFingerprint)
+		if err != nil {
+			return err
+		}
+
+		mu.Lock()
+		acceptedKeys[host] = keyFingerprint
+		mu.Unlock()
+
+		if userKnownHostsPath != "" {
+			err = sshAppendKnownHost(userKnownHostsPath, hostname, remote, key)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}, nil
+}
+
+func sshKnownHostsFiles() ([]string, string, error) {
 	knownHostsFiles := make([]string, 0, 4)
+	var userKnownHostsPath string
 
 	homeDir, err := os.UserHomeDir()
 	if err == nil && homeDir != "" {
+		userKnownHostsPath = filepath.Join(homeDir, ".ssh", "known_hosts")
 		knownHostsFiles = append(knownHostsFiles,
-			filepath.Join(homeDir, ".ssh", "known_hosts"),
+			userKnownHostsPath,
 			filepath.Join(homeDir, ".ssh", "known_hosts2"))
 	}
 
@@ -281,11 +353,41 @@ func sshKnownHostsCallback() (ssh.HostKeyCallback, error) {
 		}
 	}
 
-	if len(existingFiles) == 0 {
-		return nil, errors.New("Couldn't find any SSH known_hosts file")
+	return existingFiles, userKnownHostsPath, nil
+}
+
+func sshAppendKnownHost(path string, hostname string, remote net.Addr, key ssh.PublicKey) error {
+	err := os.MkdirAll(filepath.Dir(path), 0o700)
+	if err != nil {
+		return err
 	}
 
-	return knownhosts.New(existingFiles...)
+	entries := []string{hostname}
+	if remote != nil && remote.String() != "" {
+		entries = append(entries, remote.String())
+	}
+
+	seenEntries := map[string]struct{}{}
+	normalizedEntries := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		normalizedEntry := knownhosts.Normalize(entry)
+		if _, ok := seenEntries[normalizedEntry]; ok {
+			continue
+		}
+
+		seenEntries[normalizedEntry] = struct{}{}
+		normalizedEntries = append(normalizedEntries, entry)
+	}
+
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = file.Close() }()
+
+	_, err = fmt.Fprintf(file, "%s\n", knownhosts.Line(normalizedEntries, key))
+	return err
 }
 
 func sshAuthMethods(args *ConnectionArgs) ([]ssh.AuthMethod, net.Conn, error) {
@@ -405,6 +507,16 @@ func sshRemoteSocketPaths(remoteURL *url.URL) []string {
 	return []string{path}
 }
 
+func sshConnectionAddress(remoteURL *url.URL) string {
+	connectionURL := &url.URL{
+		Scheme: "ssh",
+		User:   remoteURL.User,
+		Host:   remoteURL.Host,
+	}
+
+	return connectionURL.String()
+}
+
 // ConnectIncusSSH lets you connect to a remote Incus daemon over an SSH connection to its Unix socket.
 func ConnectIncusSSH(uri string, args *ConnectionArgs) (InstanceServer, error) {
 	return ConnectIncusSSHWithContext(context.Background(), uri, args)
@@ -440,6 +552,7 @@ func ConnectIncusSSHWithContext(ctx context.Context, uri string, args *Connectio
 		httpBaseURL:        *httpBaseURL,
 		httpUnixPath:       socketPath,
 		httpProtocol:       "ssh",
+		connectionAddress:  sshConnectionAddress(remoteURL),
 		httpUserAgent:      args.UserAgent,
 		ctxConnected:       ctxConnected,
 		ctxConnectedCancel: ctxConnectedCancel,

@@ -77,6 +77,9 @@ type ConnectionArgs struct {
 
 	// PromptPassword is a helper function used when encountering an encrypted SSH key.
 	PromptPassword func(filename string) (string, error)
+
+	// PromptHostKey is a helper function used when encountering an unknown SSH host key.
+	PromptHostKey func(host string, keyType string, fingerprint string) error
 }
 
 // ConnectIncus lets you connect to a remote Incus daemon over HTTPs.
@@ -221,6 +224,7 @@ func ConnectIncusUnixWithContext(ctx context.Context, path string, args *Connect
 		httpBaseURL:        *httpBaseURL,
 		httpUnixPath:       path,
 		httpProtocol:       "unix",
+		connectionAddress:  fmt.Sprintf("unix://%s", path),
 		httpUserAgent:      args.UserAgent,
 		ctxConnected:       ctxConnected,
 		ctxConnectedCancel: ctxConnectedCancel,

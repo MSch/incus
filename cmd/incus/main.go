@@ -446,6 +446,23 @@ func (c *cmdGlobal) PreRun(cmd *cobra.Command, _ []string) error {
 		return c.asker.AskPasswordOnce(fmt.Sprintf(i18n.G("Password for %s: "), filename)), nil
 	}
 
+	c.conf.PromptHostKey = func(host string, keyType string, fingerprint string) error {
+		fmt.Printf(i18n.G("SSH host: %s")+"\n", host)
+		fmt.Printf(i18n.G("SSH key type: %s")+"\n", keyType)
+		fmt.Printf(i18n.G("SSH fingerprint: %s")+"\n", fingerprint)
+
+		accept, err := c.asker.AskBool(i18n.G("Trust this SSH host key?")+" (yes/no) [default=no]: ", "no")
+		if err != nil {
+			return err
+		}
+
+		if !accept {
+			return errors.New(i18n.G("SSH host key rejected by user"))
+		}
+
+		return nil
+	}
+
 	// If the user is running a command that may attempt to connect to the local daemon
 	// and this is the first time the client has been run by the user, then check to see
 	// if the server has been properly configured.  Don't display the message if the var path

@@ -42,12 +42,13 @@ type ProtocolIncus struct {
 	// skipEvents tracks whether we were configured not to connect to the events endpoint
 	skipEvents bool
 
-	http            *http.Client
-	httpCertificate string
-	httpBaseURL     neturl.URL
-	httpUnixPath    string
-	httpProtocol    string
-	httpUserAgent   string
+	http              *http.Client
+	httpCertificate   string
+	httpBaseURL       neturl.URL
+	httpUnixPath      string
+	httpProtocol      string
+	connectionAddress string
+	httpUserAgent     string
 
 	requireAuthenticated bool
 
@@ -76,6 +77,11 @@ func (r *ProtocolIncus) GetConnectionInfo() (*ConnectionInfo, error) {
 	info.Certificate = r.httpCertificate
 	info.Protocol = "incus"
 	info.URL = r.httpBaseURL.String()
+	info.ConnectionAddress = r.connectionAddress
+	if info.ConnectionAddress == "" {
+		info.ConnectionAddress = info.URL
+	}
+
 	info.SocketPath = r.httpUnixPath
 
 	info.Project = r.project
@@ -109,6 +115,18 @@ func (r *ProtocolIncus) GetConnectionInfo() (*ConnectionInfo, error) {
 	info.Addresses = urls
 
 	return &info, nil
+}
+
+func connectionEndpointID(info *ConnectionInfo) string {
+	if info.ConnectionAddress != "" {
+		return info.ConnectionAddress
+	}
+
+	return info.URL
+}
+
+func sameConnectionEndpoint(sourceInfo *ConnectionInfo, destInfo *ConnectionInfo) bool {
+	return connectionEndpointID(sourceInfo) == connectionEndpointID(destInfo) && sourceInfo.SocketPath == destInfo.SocketPath
 }
 
 // isSameServer compares the calling ProtocolIncus object with the provided server object to check if they are the same server.

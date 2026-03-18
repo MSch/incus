@@ -86,6 +86,34 @@ func normalizeSSHRemoteURL(remoteURL *url.URL) (string, error) {
 	return normalizedURL.String(), nil
 }
 
+func remoteConfigWithURL(remote config.Remote, remoteURL string) (config.Remote, string, error) {
+	if isSSHRemoteAddr(remoteURL) {
+		parsedURL, err := url.Parse(remoteURL)
+		if err != nil {
+			return remote, "", err
+		}
+
+		remoteURL, err = normalizeSSHRemoteURL(parsedURL)
+		if err != nil {
+			return remote, "", err
+		}
+
+		remote.AuthType = "ssh"
+		remote.Public = false
+		remote.Protocol = "incus"
+	} else if remote.AuthType == "ssh" {
+		if remote.Protocol == "incus" && !remote.Public {
+			remote.AuthType = api.AuthenticationMethodTLS
+		} else {
+			remote.AuthType = ""
+		}
+	}
+
+	remote.Addr = remoteURL
+
+	return remote, remoteURL, nil
+}
+
 // Command returns a cobra.Command for use with (*cobra.Command).AddCommand.
 func (c *cmdRemote) Command() *cobra.Command {
 	cmd := &cobra.Command{}
@@ -510,6 +538,17 @@ func (c *cmdRemoteAdd) Run(cmd *cobra.Command, args []string) error {
 		Protocol:  c.flagProtocol,
 		AuthType:  c.flagAuthType,
 		KeepAlive: c.flagKeepAlive,
+	}
+
+	originalPromptHostKey := conf.PromptHostKey
+	if isSSHRemoteAddr(addr) && c.flagAcceptCert {
+		conf.PromptHostKey = func(host string, keyType string, fingerprint string) error {
+			return nil
+		}
+
+		defer func() {
+			conf.PromptHostKey = originalPromptHostKey
+		}()
 	}
 
 	// Attempt to connect
@@ -1449,27 +1488,11 @@ func (c *cmdRemoteSetURL) Run(cmd *cobra.Command, args []string) error {
 		conf.Remotes[remoteName] = remote
 	}
 
-	if isSSHRemoteAddr(remoteURL) {
-		parsedURL, err := url.Parse(remoteURL)
-		if err != nil {
-			return err
-		}
-
-		remoteURL, err = normalizeSSHRemoteURL(parsedURL)
-		if err != nil {
-			return err
-		}
-
-		remote.AuthType = "ssh"
-	} else if remote.AuthType == "ssh" {
-		if remote.Protocol == "incus" && !remote.Public {
-			remote.AuthType = api.AuthenticationMethodTLS
-		} else {
-			remote.AuthType = ""
-		}
+	remote, remoteURL, err = remoteConfigWithURL(remote, remoteURL)
+	if err != nil {
+		return err
 	}
 
-	remote.Addr = remoteURL
 	conf.Remotes[remoteName] = remote
 
 	return conf.SaveConfig(c.global.confPath)

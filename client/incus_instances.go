@@ -835,7 +835,7 @@ func (r *ProtocolIncus) CopyInstance(source InstanceServer, instance api.Instanc
 	}
 
 	// Optimization for the local copy case
-	if destInfo.URL == sourceInfo.URL && destInfo.SocketPath == sourceInfo.SocketPath && (!r.IsClustered() || instance.Location == r.clusterTarget || r.HasExtension("cluster_internal_copy")) {
+	if sameConnectionEndpoint(sourceInfo, destInfo) && (!r.IsClustered() || instance.Location == r.clusterTarget || r.HasExtension("cluster_internal_copy")) {
 		// Project handling
 		if destInfo.Project != sourceInfo.Project {
 			if !r.HasExtension("container_copy_project") {
@@ -1896,7 +1896,7 @@ func (r *ProtocolIncus) CopyInstanceSnapshot(source InstanceServer, instanceName
 	}
 
 	// Optimization for the local copy case
-	if destInfo.URL == sourceInfo.URL && destInfo.SocketPath == sourceInfo.SocketPath && (!r.IsClustered() || instance.Location == r.clusterTarget || r.HasExtension("cluster_internal_copy")) {
+	if sameConnectionEndpoint(sourceInfo, destInfo) && (!r.IsClustered() || instance.Location == r.clusterTarget || r.HasExtension("cluster_internal_copy")) {
 		// Project handling
 		if destInfo.Project != sourceInfo.Project {
 			if !r.HasExtension("container_copy_project") {

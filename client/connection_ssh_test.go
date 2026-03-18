@@ -9,8 +9,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
 
@@ -159,6 +161,96 @@ func TestSSHAuthMethodsPrefersAgentBeforeDefaultKeys(t *testing.T) {
 	}
 }
 
+func TestSSHConnectionInfoUsesConnectionAddress(t *testing.T) {
+	httpBaseURL, err := url.Parse("http://unix.socket")
+	if err != nil {
+		t.Fatalf("Failed to parse base URL: %v", err)
+	}
+
+	server := ProtocolIncus{
+		httpBaseURL:       *httpBaseURL,
+		httpUnixPath:      "/run/incus/unix.socket",
+		httpProtocol:      "ssh",
+		connectionAddress: "ssh://user@example.com:22",
+	}
+
+	info, err := server.GetConnectionInfo()
+	if err != nil {
+		t.Fatalf("Failed to get connection info: %v", err)
+	}
+
+	if info.URL != "http://unix.socket" {
+		t.Fatalf("Expected HTTP base URL to remain unchanged, got %q", info.URL)
+	}
+
+	if info.ConnectionAddress != "ssh://user@example.com:22" {
+		t.Fatalf("Expected SSH connection address, got %q", info.ConnectionAddress)
+	}
+}
+
+func TestSSHKnownHostsCallbackPromptsAndPersistsUnknownHost(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	promptCalls := 0
+	callback, err := sshKnownHostsCallback(&ConnectionArgs{
+		PromptHostKey: func(host string, keyType string, fingerprint string) error {
+			promptCalls++
+
+			if host != "example.com" {
+				t.Fatalf("Unexpected host %q", host)
+			}
+
+			if keyType == "" {
+				t.Fatalf("Expected SSH key type to be set")
+			}
+
+			if fingerprint == "" {
+				t.Fatalf("Expected SSH fingerprint to be set")
+			}
+
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to build host key callback: %v", err)
+	}
+
+	signer := sshTestSigner(t)
+	remoteAddr := &net.TCPAddr{IP: net.ParseIP("203.0.113.10"), Port: 22}
+
+	err = callback("example.com:22", remoteAddr, signer.PublicKey())
+	if err != nil {
+		t.Fatalf("Failed accepting unknown SSH host key: %v", err)
+	}
+
+	if promptCalls != 1 {
+		t.Fatalf("Expected one SSH host-key prompt, got %d", promptCalls)
+	}
+
+	knownHostsContent, err := os.ReadFile(filepath.Join(homeDir, ".ssh", "known_hosts"))
+	if err != nil {
+		t.Fatalf("Failed reading known_hosts: %v", err)
+	}
+
+	if !strings.Contains(string(knownHostsContent), "example.com") {
+		t.Fatalf("Expected known_hosts entry to include hostname, got %q", string(knownHostsContent))
+	}
+
+	if !strings.Contains(string(knownHostsContent), "203.0.113.10") {
+		t.Fatalf("Expected known_hosts entry to include remote address, got %q", string(knownHostsContent))
+	}
+
+	err = callback("example.com:22", remoteAddr, signer.PublicKey())
+	if err != nil {
+		t.Fatalf("Failed accepting cached SSH host key: %v", err)
+	}
+
+	if promptCalls != 1 {
+		t.Fatalf("Expected SSH host-key prompt to be cached, got %d prompts", promptCalls)
+	}
+}
+
 func encryptedTestPrivateKey(t *testing.T) []byte {
 	t.Helper()
 
@@ -173,4 +265,20 @@ func encryptedTestPrivateKey(t *testing.T) []byte {
 	}
 
 	return pem.EncodeToMemory(block)
+}
+
+func sshTestSigner(t *testing.T) ssh.Signer {
+	t.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("Failed generating test RSA key: %v", err)
+	}
+
+	signer, err := ssh.NewSignerFromKey(privateKey)
+	if err != nil {
+		t.Fatalf("Failed creating SSH signer: %v", err)
+	}
+
+	return signer
 }

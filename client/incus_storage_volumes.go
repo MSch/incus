@@ -669,7 +669,7 @@ func (r *ProtocolIncus) CopyStoragePoolVolume(pool string, source InstanceServer
 	clusterInternalVolumeCopy := r.CheckExtension("cluster_internal_custom_volume_copy") == nil
 
 	// Copy the storage pool volume locally.
-	if destInfo.URL == sourceInfo.URL && destInfo.SocketPath == sourceInfo.SocketPath && (volume.Location == r.clusterTarget || (volume.Location == "none" && r.clusterTarget == "") || clusterInternalVolumeCopy) {
+	if sameConnectionEndpoint(sourceInfo, destInfo) && (volume.Location == r.clusterTarget || (volume.Location == "none" && r.clusterTarget == "") || clusterInternalVolumeCopy) {
 		// Project handling
 		if destInfo.Project != sourceInfo.Project {
 			if !r.HasExtension("storage_api_project") {
